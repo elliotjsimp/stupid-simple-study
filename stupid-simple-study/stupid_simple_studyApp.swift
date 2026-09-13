@@ -1,32 +1,49 @@
-//
-//  stupid_simple_studyApp.swift
-//  stupid-simple-study
-//
-//  Created by Elliot on 2026-08-27.
-//
-
 import SwiftUI
 import SwiftData
 
 @main
 struct stupid_simple_studyApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+    @State private var settings = AppSettings.shared
+    @State private var termContext = TermContext()
+    @State private var sessionEngine = SessionEngine.shared
+    @State private var courseEditor = CourseEditorPresenter()
 
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+    let sharedModelContainer: ModelContainer
+
+    init() {
+        AppModelContainer.removeStoreIfRequested()
+        sharedModelContainer = AppModelContainer.make()
+    }
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        WindowGroup("Stupid Simple Study") {
+            RootView()
+                .environment(\.appSettings, settings)
+                .environment(termContext)
+                .environment(sessionEngine)
+                .environment(courseEditor)
+                .preferredColorScheme(settings.preferredColorScheme)
+                .appAccentColor(settings)
         }
+        .modelContainer(sharedModelContainer)
+        .defaultSize(width: 1100, height: 720)
+
+        MenuBarExtra {
+            if settings.showMenuBarItem {
+                MenuBarView()
+                    .environment(\.appSettings, settings)
+                    .environment(termContext)
+                    .environment(sessionEngine)
+                    .preferredColorScheme(settings.preferredColorScheme)
+            }
+        } label: {
+            if settings.showMenuBarItem {
+                MenuBarLabel()
+                    .environment(sessionEngine)
+                    .environment(\.appSettings, settings)
+            }
+        }
+        .menuBarExtraStyle(.window)
         .modelContainer(sharedModelContainer)
     }
 }
