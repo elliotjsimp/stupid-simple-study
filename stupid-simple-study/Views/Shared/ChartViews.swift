@@ -45,62 +45,17 @@ struct StudyTimeBarChart: View {
 
     private let xPlotPadding: CGFloat = 8
 
-    private var chartHeight: CGFloat {
+    private var idealChartHeight: CGFloat {
         min(140, max(56, CGFloat(sortedBars.count) * 28 + 8))
     }
 
     var body: some View {
         VStack(spacing: 8) {
-            Chart(sortedBars) { bar in
-                BarMark(
-                    x: .value("Time", bar.seconds),
-                    y: .value("Name", bar.name),
-                    height: .fixed(18)
-                )
-                .foregroundStyle(bar.color)
-                .cornerRadius(9)
-                .opacity(hoveredName == nil || hoveredName == bar.name ? 1 : 0.35)
+            GeometryReader { geo in
+                barChart(height: fittedHeight(in: geo.size.height))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .chartXScale(
-                domain: 0...xScaleDomainMax,
-                range: .plotDimension(padding: xPlotPadding)
-            )
-            .chartXAxis {
-                AxisMarks(values: xAxisMarkValues) { value in
-                    AxisGridLine()
-                    AxisValueLabel(centered: true) {
-                        if let seconds = value.as(Int.self) {
-                            Text(DurationFormatters.compactHours(seconds))
-                                .font(.caption2)
-                        }
-                    }
-                }
-            }
-            .chartYAxis(.hidden)
-            .chartOverlay { proxy in
-                GeometryReader { geometry in
-                    ZStack(alignment: .topLeading) {
-                        Rectangle()
-                            .fill(.clear)
-                            .contentShape(Rectangle())
-                            .onContinuousHover { phase in
-                                switch phase {
-                                case .active(let location):
-                                    updateHover(selectedBarName(at: location, proxy: proxy, geometry: geometry))
-                                case .ended:
-                                    updateHover(nil)
-                                }
-                            }
-
-                        if let revealedName,
-                           let bar = bars.first(where: { $0.name == revealedName }) {
-                            inBarLabel(for: bar, proxy: proxy, geometry: geometry)
-                        }
-                    }
-                }
-            }
-            .frame(height: chartHeight)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if let footnote, !footnote.isEmpty {
                 Text(footnote)
@@ -110,9 +65,80 @@ struct StudyTimeBarChart: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onDisappear {
             revealTask?.cancel()
         }
+    }
+
+    private func fittedHeight(in available: CGFloat) -> CGFloat {
+        guard available > 1 else { return idealChartHeight }
+        return min(idealChartHeight, available)
+    }
+
+    /// Bar thickness that stays inside each category band, so many activities keep a gap instead of stacking.
+    private func barThickness(chartHeight: CGFloat) -> CGFloat {
+        let count = CGFloat(max(sortedBars.count, 1))
+        let plot = max(24, chartHeight - 28)
+        let band = plot / count
+        let gap: CGFloat = count <= 3 ? 8 : 4
+        return min(16, max(3, band - gap))
+    }
+
+    private func barChart(height: CGFloat) -> some View {
+        let thickness = barThickness(chartHeight: height)
+        return Chart(sortedBars) { bar in
+            BarMark(
+                x: .value("Time", bar.seconds),
+                y: .value("Name", bar.name),
+                height: .fixed(thickness)
+            )
+            .foregroundStyle(bar.color)
+            .cornerRadius(thickness / 2)
+            .opacity(hoveredName == nil || hoveredName == bar.name ? 1 : 0.35)
+        }
+        .chartXScale(
+            domain: 0...xScaleDomainMax,
+            range: .plotDimension(padding: xPlotPadding)
+        )
+        .chartXAxis {
+            AxisMarks(values: xAxisMarkValues) { value in
+                AxisGridLine()
+                AxisValueLabel(centered: true) {
+                    if let seconds = value.as(Int.self) {
+                        Text(DurationFormatters.compactHours(seconds))
+                            .font(.caption2)
+                    }
+                }
+            }
+        }
+        .chartYAxis(.hidden)
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                ZStack(alignment: .topLeading) {
+                    Rectangle()
+                        .fill(.clear)
+                        .contentShape(Rectangle())
+                        .onContinuousHover { phase in
+                            switch phase {
+                            case .active(let location):
+                                updateHover(selectedBarName(at: location, proxy: proxy, geometry: geometry))
+                            case .ended:
+                                updateHover(nil)
+                            }
+                        }
+
+                    if let revealedName,
+                       let bar = bars.first(where: { $0.name == revealedName }) {
+                        inBarLabel(for: bar, proxy: proxy, geometry: geometry)
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.18), value: revealedName)
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: hoveredName)
+        .frame(height: height)
     }
 
     @ViewBuilder
@@ -137,14 +163,18 @@ struct StudyTimeBarChart: View {
 
     private func updateHover(_ name: String?) {
         if name == hoveredName { return }
-        hoveredName = name
         revealTask?.cancel()
-        revealedName = nil
+        withAnimation(.easeInOut(duration: 0.15)) {
+            hoveredName = name
+            revealedName = nil
+        }
         guard let name else { return }
         revealTask = Task { @MainActor in
             try? await Task.sleep(for: hoverRevealDelay)
             guard !Task.isCancelled, hoveredName == name else { return }
-            revealedName = name
+            withAnimation(.easeInOut(duration: 0.18)) {
+                revealedName = name
+            }
         }
     }
 
@@ -176,7 +206,7 @@ struct HeatmapView: View {
     let trackingStart: Date
     let termFirstDay: Date
     let termLastDay: Date
-    let goalSecondsForDay: (Date) -> Int
+    let fullColorSeconds: Int
     let themeColor: Color
     var visibleStart: Date? = nil
     var visibleEnd: Date? = nil
@@ -197,7 +227,7 @@ struct HeatmapView: View {
             trackingStart: trackingStart,
             termFirstDay: termFirstDay,
             termLastDay: termLastDay,
-            goalSecondsForDay: goalSecondsForDay,
+            fullColorSeconds: fullColorSeconds,
             themeColor: themeColor,
             spacing: spacing,
             gridHeight: gridHeight,
@@ -371,7 +401,7 @@ private struct HeatmapLayout {
     let termLastDayStart: Date
     let trackingStart: Date
     let today: Date
-    let goalSecondsForDay: (Date) -> Int
+    let fullColorSeconds: Int
     let themeColor: Color
 
     var contentWidth: CGFloat {
@@ -384,7 +414,7 @@ private struct HeatmapLayout {
         trackingStart: Date,
         termFirstDay: Date,
         termLastDay: Date,
-        goalSecondsForDay: @escaping (Date) -> Int,
+        fullColorSeconds: Int,
         themeColor: Color,
         spacing: CGFloat,
         gridHeight: CGFloat,
@@ -395,7 +425,7 @@ private struct HeatmapLayout {
         self.trackingStart = trackingStart
         self.termFirstDayStart = termFirstDay.startOfDay
         self.termLastDayStart = termLastDay.startOfDay
-        self.goalSecondsForDay = goalSecondsForDay
+        self.fullColorSeconds = fullColorSeconds
         self.themeColor = themeColor
         self.spacing = spacing
         self.gridHeight = gridHeight
@@ -477,7 +507,7 @@ private struct HeatmapLayout {
         if outOfTerm { return Color.secondary.opacity(0.04) }
         if untracked { return Color.secondary.opacity(0.14) }
         if future { return Color.secondary.opacity(0.06) }
-        let t = min(1.0, Double(seconds) / Double(max(goalSecondsForDay(dayStart), 60)))
+        let t = min(1.0, Double(seconds) / Double(max(fullColorSeconds, 60)))
         return themeColor.opacity(0.12 + t * 0.88)
     }
 
@@ -529,39 +559,65 @@ struct ChartOneDayPlaceholder: View {
     }
 }
 
+private struct QualityTrendSample: Identifiable {
+    let date: Date
+    let average: Double
+    var id: Date { date }
+}
+
 struct FocusTrendChart: View {
     let points: [FocusTrendPoint]
+    let range: DashboardTimeRange
     let themeColor: Color
 
     @State private var selectedID: PersistentIdentifier?
 
+    private let hoverAnimation = Animation.easeInOut(duration: 0.18)
+
+    /// One sample per rated day: the mean of that day's ratings, then a trailing mean over the range window.
+    private var trendSamples: [QualityTrendSample] {
+        let grouped = Dictionary(grouping: points) { $0.date.startOfDay }
+        let days = grouped.keys.sorted()
+        let window = max(1, range.qualityTrendWindowDays)
+        return days.map { day in
+            let cutoff = Calendar.app.date(byAdding: .day, value: -(window - 1), to: day) ?? day
+            let included = days.filter { $0 >= cutoff && $0 <= day }
+            let means = included.map { includedDay -> Double in
+                let ratings = grouped[includedDay] ?? []
+                let total = ratings.reduce(0.0) { $0 + $1.rating }
+                return total / Double(max(ratings.count, 1))
+            }
+            let average = means.reduce(0, +) / Double(max(means.count, 1))
+            let anchor = grouped[day]?.map(\.date).max() ?? day
+            return QualityTrendSample(date: anchor, average: average)
+        }
+    }
+
     var body: some View {
         if points.isEmpty {
-            Text("No focus ratings yet")
+            Text("No quality ratings yet")
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         } else {
-            Chart(points) { point in
-                LineMark(
-                    x: .value("Date", point.date),
-                    y: .value("Rating", point.rating)
-                )
-                .foregroundStyle(themeColor)
-                .interpolationMethod(.catmullRom)
-
-                PointMark(
-                    x: .value("Date", point.date),
-                    y: .value("Rating", point.rating)
-                )
-                .foregroundStyle(themeColor)
-                .symbolSize(selectedID == point.id ? 64 : 36)
+            Chart {
+                ForEach(trendSamples) { sample in
+                    LineMark(
+                        x: .value("Date", sample.date),
+                        y: .value("Rating", sample.average),
+                        series: .value("Series", "Trend")
+                    )
+                    .foregroundStyle(themeColor)
+                    .interpolationMethod(.monotone)
+                }
             }
             .chartYScale(domain: 0...5)
             .chartYAxis {
                 AxisMarks(values: [1, 2, 3, 4, 5])
             }
+            .chartLegend(.hidden)
             .chartOverlay { proxy in
                 GeometryReader { geometry in
+                    let selected = points.first { $0.id == selectedID }
                     ZStack(alignment: .topLeading) {
                         Rectangle()
                             .fill(.clear)
@@ -569,15 +625,22 @@ struct FocusTrendChart: View {
                             .onContinuousHover { phase in
                                 switch phase {
                                 case .active(let location):
-                                    selectedID = nearestPoint(at: location, proxy: proxy, geometry: geometry)?.id
+                                    let next = nearestPoint(at: location, proxy: proxy, geometry: geometry)?.id
+                                    guard next != selectedID else { return }
+                                    withAnimation(hoverAnimation) {
+                                        selectedID = next
+                                    }
                                 case .ended:
-                                    selectedID = nil
+                                    guard selectedID != nil else { return }
+                                    withAnimation(hoverAnimation) {
+                                        selectedID = nil
+                                    }
                                 }
                             }
 
-                        if let selectedID,
-                           let point = points.first(where: { $0.id == selectedID }) {
-                            focusCaption(for: point, proxy: proxy, geometry: geometry)
+                        if let selected {
+                            focusCaption(for: selected, proxy: proxy, geometry: geometry)
+                                .transition(.opacity)
                         }
                     }
                 }

@@ -74,26 +74,36 @@ struct SettingsView: View {
                     )
                     Toggle("Show menu bar item", isOn: $settings.showMenuBarItem)
                     Toggle("Show menu bar timer", isOn: $settings.showMenuBarTimer)
-                    Toggle("Focus ratings", isOn: $settings.focusRatingsEnabled)
+                    Toggle("Quality ratings", isOn: $settings.focusRatingsEnabled)
                     Toggle("Streaks", isOn: $settings.streaksEnabled)
+                    Toggle("Show goal summary", isOn: $settings.showGoalSummary)
+                }
+
+                Section("Goals") {
+                    if settings.useWeekdayDailyGoals {
+                        WeekdayGoalsGrid(
+                            hours: settings.weekdayGoalHours,
+                            setHours: { index, hours in
+                                var updated = settings.weekdayGoalHours
+                                updated[index] = hours
+                                settings.weekdayGoalHours = updated
+                            }
+                        )
+                    } else {
+                        Stepper(
+                            "Daily goal: \(String(format: "%.1f", settings.dailyGoalHours))h",
+                            value: $settings.dailyGoalHours,
+                            in: 0.5...12,
+                            step: 0.5
+                        )
+                    }
+                    Toggle("Different goal per weekday", isOn: $settings.useWeekdayDailyGoals)
                     Stepper(
-                        "Daily goal: \(String(format: "%.1f", settings.dailyGoalHours))h",
-                        value: $settings.dailyGoalHours,
-                        in: 0.5...12,
+                        "Heatmap full color at: \(String(format: "%.1f", settings.heatmapFullHours))h",
+                        value: $settings.heatmapFullHours,
+                        in: 0.5...16,
                         step: 0.5
                     )
-                    .disabled(settings.useWeekdayDailyGoals)
-                    Toggle("Different goal per weekday", isOn: $settings.useWeekdayDailyGoals)
-                    if settings.useWeekdayDailyGoals {
-                        ForEach(0..<7, id: \.self) { index in
-                            Stepper(
-                                "\(AppSettings.weekdayGoalLabels[index]): \(String(format: "%.1f", settings.weekdayGoalHours[index]))h",
-                                value: weekdayGoalBinding(index),
-                                in: 0.5...12,
-                                step: 0.5
-                            )
-                        }
-                    }
                 }
 
                 Section("Data") {
@@ -162,17 +172,6 @@ struct SettingsView: View {
         }
     }
 
-    private func weekdayGoalBinding(_ index: Int) -> Binding<Double> {
-        Binding(
-            get: { settings.weekdayGoalHours[index] },
-            set: { newValue in
-                var hours = settings.weekdayGoalHours
-                hours[index] = newValue
-                settings.weekdayGoalHours = hours
-            }
-        )
-    }
-
     private func resetAppDataAndRelaunch() {
         sessionEngine.discard()
         do {
@@ -197,5 +196,52 @@ struct SettingsView: View {
                 importError = error.localizedDescription
             }
         }
+    }
+}
+
+private struct WeekdayGoalsGrid: View {
+    let hours: [Double]
+    let setHours: (Int, Double) -> Void
+
+    var body: some View {
+        Grid(horizontalSpacing: 6, verticalSpacing: 4) {
+            GridRow {
+                ForEach(0..<7, id: \.self) { index in
+                    Text(AppSettings.weekdayGoalShortLabels[index])
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            GridRow {
+                ForEach(0..<7, id: \.self) { index in
+                    Text(hourLabel(index))
+                        .font(.body.monospacedDigit())
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            GridRow {
+                ForEach(0..<7, id: \.self) { index in
+                    Stepper(value: hourBinding(index), in: 0.5...12, step: 0.5) {
+                        EmptyView()
+                    }
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func hourLabel(_ index: Int) -> String {
+        String(format: "%.1f", hours.indices.contains(index) ? hours[index] : 2)
+    }
+
+    private func hourBinding(_ index: Int) -> Binding<Double> {
+        Binding(
+            get: { hours.indices.contains(index) ? hours[index] : 2 },
+            set: { setHours(index, $0) }
+        )
     }
 }

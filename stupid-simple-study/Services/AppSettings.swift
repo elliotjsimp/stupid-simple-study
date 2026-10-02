@@ -74,6 +74,10 @@ final class AppSettings {
         didSet { defaults.set(streaksEnabled, forKey: Keys.streaksEnabled) }
     }
 
+    var showGoalSummary: Bool {
+        didSet { defaults.set(showGoalSummary, forKey: Keys.showGoalSummary) }
+    }
+
     var dailyGoalHours: Double {
         didSet { defaults.set(dailyGoalHours, forKey: Keys.dailyGoalHours) }
     }
@@ -85,6 +89,11 @@ final class AppSettings {
     /// Monday-first study-time goals in hours when `useWeekdayDailyGoals` is on.
     var weekdayGoalHours: [Double] {
         didSet { defaults.set(weekdayGoalHours, forKey: Keys.weekdayGoalHours) }
+    }
+
+    /// Study hours that map to full heatmap intensity.
+    var heatmapFullHours: Double {
+        didSet { defaults.set(heatmapFullHours, forKey: Keys.heatmapFullHours) }
     }
 
     var sidebarShowsLabels: Bool {
@@ -103,9 +112,11 @@ final class AppSettings {
         static let showMenuBarTimer = "showMenuBarTimer"
         static let focusRatingsEnabled = "focusRatingsEnabled"
         static let streaksEnabled = "streaksEnabled"
+        static let showGoalSummary = "showGoalSummary"
         static let dailyGoalHours = "dailyGoalHours"
         static let useWeekdayDailyGoals = "useWeekdayDailyGoals"
         static let weekdayGoalHours = "weekdayGoalHours"
+        static let heatmapFullHours = "heatmapFullHours"
         static let sidebarShowsLabels = "sidebarShowsLabels"
         static let hasCompletedOnboarding = "hasCompletedOnboarding"
     }
@@ -125,6 +136,7 @@ final class AppSettings {
         showMenuBarTimer = defaults.object(forKey: Keys.showMenuBarTimer) as? Bool ?? true
         focusRatingsEnabled = defaults.object(forKey: Keys.focusRatingsEnabled) as? Bool ?? true
         streaksEnabled = defaults.object(forKey: Keys.streaksEnabled) as? Bool ?? true
+        showGoalSummary = defaults.object(forKey: Keys.showGoalSummary) as? Bool ?? true
         let loadedDailyGoalHours = defaults.object(forKey: Keys.dailyGoalHours) as? Double ?? 2.0
         dailyGoalHours = loadedDailyGoalHours
         useWeekdayDailyGoals = defaults.object(forKey: Keys.useWeekdayDailyGoals) as? Bool ?? false
@@ -133,6 +145,7 @@ final class AppSettings {
         } else {
             weekdayGoalHours = Array(repeating: loadedDailyGoalHours, count: 7)
         }
+        heatmapFullHours = defaults.object(forKey: Keys.heatmapFullHours) as? Double ?? 2.0
         sidebarShowsLabels = defaults.object(forKey: Keys.sidebarShowsLabels) as? Bool ?? true
         hasCompletedOnboarding = defaults.bool(forKey: Keys.hasCompletedOnboarding)
         systemColorScheme = Self.detectSystemColorScheme()
@@ -182,6 +195,7 @@ final class AppSettings {
     }
 
     static let weekdayGoalLabels = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    static let weekdayGoalShortLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
     func goalHours(for date: Date) -> Double {
         guard useWeekdayDailyGoals, weekdayGoalHours.count == 7 else {
@@ -193,6 +207,10 @@ final class AppSettings {
 
     func goalSeconds(for date: Date) -> Int {
         Int(goalHours(for: date) * 3600)
+    }
+
+    var heatmapFullSeconds: Int {
+        Int(heatmapFullHours * 3600)
     }
 
     var chartScaleGoalSeconds: Int {
@@ -212,9 +230,11 @@ final class AppSettings {
         showMenuBarTimer = true
         focusRatingsEnabled = true
         streaksEnabled = true
+        showGoalSummary = true
         dailyGoalHours = 2.0
         useWeekdayDailyGoals = false
         weekdayGoalHours = Array(repeating: 2.0, count: 7)
+        heatmapFullHours = 2.0
         sidebarShowsLabels = true
         hasCompletedOnboarding = false
     }

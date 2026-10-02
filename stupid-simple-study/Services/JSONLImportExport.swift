@@ -78,13 +78,16 @@ enum JSONLError: LocalizedError {
 
 @MainActor
 enum JSONLImportExport {
+    /// Dynamic type so the save panel keeps a `.jsonl` extension instead of appending `.json`.
+    private static let jsonLinesType = UTType(filenameExtension: "jsonl", conformingTo: .json) ?? .json
+
     static func exportAll(context: ModelContext) {
         let descriptor = FetchDescriptor<StudySession>()
         let sessions = (try? context.fetch(descriptor)) ?? []
         guard let text = try? JSONLCodec.encode(sessions: sessions) else { return }
 
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType.json]
+        panel.allowedContentTypes = [Self.jsonLinesType]
         panel.nameFieldStringValue = "stupid-simple-study-export.jsonl"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
@@ -94,7 +97,7 @@ enum JSONLImportExport {
 
     static func importReplace(context: ModelContext, termContext: TermContext, completion: @escaping (Result<Void, Error>) -> Void) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [UTType.json]
+        panel.allowedContentTypes = [Self.jsonLinesType, .json]
         panel.allowsMultipleSelection = false
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }

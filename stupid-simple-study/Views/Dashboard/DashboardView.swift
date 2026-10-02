@@ -120,7 +120,7 @@ struct DashboardView: View {
     private func gridCell<Content: View>(_ content: Content, height: CGFloat) -> some View {
         content
             .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .topLeading)
-            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func statsStrip(_ stats: TermStats, term: Term) -> some View {
@@ -144,9 +144,11 @@ struct DashboardView: View {
                     .font(.title3.bold())
                     ProgressView(value: min(1, Double(stats.todayStudySeconds) / Double(max(goalSeconds, 1))))
                 }
-                Text("\(stats.dailyGoalProgressDays) of \(stats.dailyGoalTargetDays) study days met goal \(selectedRange.goalCaptionSuffix)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if settings.showGoalSummary {
+                    Text("\(stats.dailyGoalProgressDays) of \(stats.dailyGoalTargetDays) study days met goal \(selectedRange.goalCaptionSuffix)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             HStack(spacing: 24) {
@@ -175,7 +177,7 @@ struct DashboardView: View {
                 trackingStart: term.trackingStartDate,
                 termFirstDay: term.firstDay,
                 termLastDay: term.lastDay,
-                goalSecondsForDay: { settings.goalSeconds(for: $0) },
+                fullColorSeconds: settings.heatmapFullSeconds,
                 themeColor: settings.resolvedAccentColor
             )
         }
@@ -241,14 +243,18 @@ struct DashboardView: View {
 
     private func focusTrend(_ stats: TermStats) -> some View {
         Card {
-            Text("Focus Trend").font(.headline)
+            Text("Quality Trend").font(.headline)
             if selectedRange == .day {
                 ChartOneDayPlaceholder()
             } else if remainingUnlockDays > 0 {
-                ChartUnlockPlaceholder(remainingDays: remainingUnlockDays, chartName: "focus trend")
+                ChartUnlockPlaceholder(remainingDays: remainingUnlockDays, chartName: "quality trend")
             } else {
-                FocusTrendChart(points: stats.focusTrend, themeColor: settings.resolvedAccentColor)
-                    .frame(maxHeight: .infinity)
+                FocusTrendChart(
+                    points: stats.focusTrend,
+                    range: selectedRange,
+                    themeColor: settings.resolvedAccentColor
+                )
+                .frame(maxHeight: .infinity)
             }
         }
     }

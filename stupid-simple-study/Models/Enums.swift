@@ -51,6 +51,16 @@ enum DashboardTimeRange: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Trailing window for the quality-trend line, in calendar days.
+    var qualityTrendWindowDays: Int {
+        switch self {
+        case .day: 1
+        case .week: 2
+        case .month: 7
+        case .all: 14
+        }
+    }
+
     var goalCaptionSuffix: String {
         switch self {
         case .day: "today"
