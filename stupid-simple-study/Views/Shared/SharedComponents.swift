@@ -79,10 +79,12 @@ struct StaticStarRatingView: View {
 }
 
 struct DurationLabel: View {
+    @Environment(\.appSettings) private var settings
+
     let seconds: Int
 
     var body: some View {
-        Text(DurationFormatters.compactHours(seconds))
+        Text(DurationFormatters.compactHours(seconds, style: settings.durationDisplayStyle))
             .font(.body.monospacedDigit())
     }
 }

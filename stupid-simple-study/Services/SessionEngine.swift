@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import SwiftData
 import SwiftUI
 
@@ -33,6 +34,7 @@ struct SessionSnapshot: Codable {
     var accumulatedStudySeconds: Int
     var segments: [LiveActivitySegment]
     var focusedMode: Bool
+    var lastStudyEndTime: Date?
 }
 
 @Observable
@@ -50,9 +52,12 @@ final class SessionEngine {
     private(set) var focusedMode = false
     private(set) var tickCount = 0
     private(set) var shouldPresentEndSheet = false
+    private(set) var lastStudyEndTime: Date?
 
     private var tickTask: Task<Void, Never>?
     private var studySegmentStart: Date?
+    private var screenLockObserver: NSObjectProtocol?
+    private var screenSleepObserver: NSObjectProtocol?
     private let snapshotKey = "sessionSnapshot"
 
     var isActive: Bool { state != .idle }
@@ -64,7 +69,22 @@ final class SessionEngine {
         return accumulatedStudySeconds
     }
 
-    private init() {}
+    private init() {
+        screenLockObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.apple.screenIsLocked"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in SessionEngine.shared.pause() }
+        }
+        screenSleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.screensDidSleepNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in SessionEngine.shared.pause() }
+        }
+    }
 
     func start(term: Term, course: Course, activityName: String?) {
         reset()
@@ -74,6 +94,7 @@ final class SessionEngine {
         self.sessionStartTime = Date()
         self.state = .studying
         self.studySegmentStart = Date()
+        self.lastStudyEndTime = nil
         if let activityName {
             segments.append(LiveActivitySegment(activityName: activityName, startTime: Date()))
         }
@@ -83,10 +104,12 @@ final class SessionEngine {
 
     func pause() {
         guard state == .studying else { return }
-        let delta = currentStudyingDelta()
-        finalizeOpenSegment()
+        let now = Date()
+        let delta = currentStudyingDelta(at: now)
+        finalizeOpenSegment(at: now)
         accumulatedStudySeconds += delta
         studySegmentStart = nil
+        lastStudyEndTime = now
         state = .paused
         stopTicking()
         persistSnapshot()
@@ -117,9 +140,10 @@ final class SessionEngine {
             return
         }
         let now = Date()
-        let delta = currentStudyingDelta()
-        finalizeOpenSegment()
+        let delta = currentStudyingDelta(at: now)
+        finalizeOpenSegment(at: now)
         accumulatedStudySeconds += delta
+        lastStudyEndTime = now
         currentActivityName = name
         if let name, segments.last?.activityName != name {
             segments.append(LiveActivitySegment(activityName: name, startTime: now))
@@ -130,10 +154,12 @@ final class SessionEngine {
 
     func pauseForEnd() {
         if state == .studying {
-            let delta = currentStudyingDelta()
-            finalizeOpenSegment()
+            let now = Date()
+            let delta = currentStudyingDelta(at: now)
+            finalizeOpenSegment(at: now)
             accumulatedStudySeconds += delta
             studySegmentStart = nil
+            lastStudyEndTime = now
         }
         state = .paused
         stopTicking()
@@ -169,6 +195,13 @@ final class SessionEngine {
         displayStudySeconds
     }
 
+    var effectiveStudyEndTime: Date? {
+        if state == .studying {
+            return Date()
+        }
+        return lastStudyEndTime
+    }
+
     func loadSnapshotIfNeeded() -> SessionSnapshot? {
         guard let data = UserDefaults.standard.data(forKey: snapshotKey),
               let snapshot = try? JSONDecoder().decode(SessionSnapshot.self, from: data)
@@ -197,6 +230,7 @@ final class SessionEngine {
         self.accumulatedStudySeconds = snapshot.accumulatedStudySeconds
         self.segments = snapshot.segments
         self.focusedMode = snapshot.focusedMode
+        self.lastStudyEndTime = snapshot.lastStudyEndTime
 
         if state == .studying {
             startTicking()
@@ -205,11 +239,9 @@ final class SessionEngine {
 
     func saveAsIs(context: ModelContext) -> StudySession? {
         guard let term, let course, let sessionStartTime else { return nil }
-        let endTime = Date()
-        var studySeconds = completedStudySecondsForSave()
-        if state == .studying {
-            studySeconds = accumulatedStudySeconds + currentStudyingDelta()
-        }
+        pauseForEnd()
+        let endTime = lastStudyEndTime ?? sessionStartTime.addingTimeInterval(TimeInterval(accumulatedStudySeconds))
+        var studySeconds = accumulatedStudySeconds
         studySeconds = StudyTimeAttribution.clipToTermLastDay(
             startTime: sessionStartTime,
             endTime: endTime,
@@ -250,16 +282,21 @@ final class SessionEngine {
         segments = []
         focusedMode = false
         studySegmentStart = nil
+        lastStudyEndTime = nil
     }
 
     private func currentStudyingDelta() -> Int {
-        guard let studySegmentStart else { return 0 }
-        return max(0, Int(Date().timeIntervalSince(studySegmentStart)))
+        currentStudyingDelta(at: Date())
     }
 
-    private func finalizeOpenSegment() {
+    private func currentStudyingDelta(at date: Date) -> Int {
+        guard let studySegmentStart else { return 0 }
+        return max(0, Int(date.timeIntervalSince(studySegmentStart)))
+    }
+
+    private func finalizeOpenSegment(at date: Date = Date()) {
         guard let studySegmentStart else { return }
-        let delta = max(0, Int(Date().timeIntervalSince(studySegmentStart)))
+        let delta = max(0, Int(date.timeIntervalSince(studySegmentStart)))
         if var last = segments.last, last.activityName == currentActivityName {
             last.durationSeconds += delta
             segments[segments.count - 1] = last
@@ -303,7 +340,8 @@ final class SessionEngine {
             sessionStartTime: sessionStartTime,
             accumulatedStudySeconds: accumulatedStudySeconds,
             segments: segments,
-            focusedMode: focusedMode
+            focusedMode: focusedMode,
+            lastStudyEndTime: lastStudyEndTime
         )
         if let data = try? JSONEncoder().encode(snapshot) {
             UserDefaults.standard.set(data, forKey: snapshotKey)

@@ -72,11 +72,17 @@ struct SettingsView: View {
                         selection: $settings.accentColor,
                         options: AccentColorPreset.allCases.map { ($0, $0.label) }
                     )
+                    SettingsMenuRow(
+                        title: "Time quantities",
+                        selection: $settings.durationDisplayStyle,
+                        options: DurationDisplayStyle.allCases.map { ($0, $0.label) }
+                    )
                     Toggle("Show menu bar item", isOn: $settings.showMenuBarItem)
                     Toggle("Show menu bar timer", isOn: $settings.showMenuBarTimer)
                     Toggle("Quality ratings", isOn: $settings.focusRatingsEnabled)
                     Toggle("Streaks", isOn: $settings.streaksEnabled)
                     Toggle("Show goal summary", isOn: $settings.showGoalSummary)
+                    Toggle("Show time without activity", isOn: $settings.showTimeWithoutActivity)
                 }
 
                 Section("Goals") {

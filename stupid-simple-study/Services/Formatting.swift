@@ -46,7 +46,31 @@ struct DurationFormatters {
         return String(format: "%02d:%02d:%02d", h, m, s)
     }
 
-    static func compactHours(_ seconds: Int) -> String {
+    static func menuBarClock(seconds: Int) -> String {
+        let h = seconds / 3600
+        let m = (seconds % 3600) / 60
+        let s = seconds % 60
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, s)
+        }
+        return String(format: "%d:%02d", m, s)
+    }
+
+    static func compactHours(_ seconds: Int, style: DurationDisplayStyle) -> String {
+        switch style {
+        case .hoursAndMinutes:
+            let totalMinutes = max(0, Int((Double(seconds) / 60).rounded()))
+            let hours = totalMinutes / 60
+            let minutes = totalMinutes % 60
+            if hours == 0 { return "\(minutes)m" }
+            if minutes == 0 { return "\(hours)h" }
+            return "\(hours)h \(minutes)m"
+        case .decimalHours:
+            return decimalHours(seconds)
+        }
+    }
+
+    private static func decimalHours(_ seconds: Int) -> String {
         let hours = Double(seconds) / 3600.0
         if hours < 1 {
             return String(format: "%.0fm", Double(seconds) / 60.0)

@@ -16,7 +16,7 @@ struct stupid_simple_studyApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Stupid Simple Study") {
+        Window("Stupid Simple Study", id: "main") {
             RootView()
                 .environment(\.appSettings, settings)
                 .environment(termContext)
@@ -27,6 +27,9 @@ struct stupid_simple_studyApp: App {
         }
         .modelContainer(sharedModelContainer)
         .defaultSize(width: 1100, height: 720)
+        .commands {
+            CommandGroup(replacing: .newItem) {}
+        }
 
         MenuBarExtra {
             if settings.showMenuBarItem {

@@ -176,6 +176,7 @@ struct EndSessionSheet: View {
     @Binding var isPresented: Bool
 
     @State private var studySeconds: Int = 0
+    @State private var originalStudySeconds: Int = 0
     @State private var note = ""
     @State private var focusRating: Int?
     @State private var showShortPrompt = false
@@ -214,6 +215,7 @@ struct EndSessionSheet: View {
         .frame(width: 420, height: 320)
         .onAppear {
             studySeconds = sessionEngine.completedStudySecondsForSave()
+            originalStudySeconds = studySeconds
             if studySeconds < 60 { showShortPrompt = true }
         }
         .confirmationDialog("Study time is under 1 minute.", isPresented: $showShortPrompt) {
@@ -237,7 +239,9 @@ struct EndSessionSheet: View {
             return
         }
 
-        let end = Date()
+        let end = studySeconds == originalStudySeconds
+            ? (sessionEngine.effectiveStudyEndTime ?? start.addingTimeInterval(TimeInterval(studySeconds)))
+            : start.addingTimeInterval(TimeInterval(studySeconds))
         let clipped = StudyTimeAttribution.clipToTermLastDay(
             startTime: start,
             endTime: end,

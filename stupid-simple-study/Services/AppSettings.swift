@@ -38,6 +38,20 @@ enum AccentColorPreset: String, CaseIterable, Identifiable {
     }
 }
 
+enum DurationDisplayStyle: String, CaseIterable, Identifiable {
+    case hoursAndMinutes
+    case decimalHours
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .hoursAndMinutes: "Hours and minutes"
+        case .decimalHours: "Decimal hours"
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class AppSettings {
@@ -78,6 +92,14 @@ final class AppSettings {
         didSet { defaults.set(showGoalSummary, forKey: Keys.showGoalSummary) }
     }
 
+    var showTimeWithoutActivity: Bool {
+        didSet { defaults.set(showTimeWithoutActivity, forKey: Keys.showTimeWithoutActivity) }
+    }
+
+    var durationDisplayStyle: DurationDisplayStyle {
+        didSet { defaults.set(durationDisplayStyle.rawValue, forKey: Keys.durationDisplayStyle) }
+    }
+
     var dailyGoalHours: Double {
         didSet { defaults.set(dailyGoalHours, forKey: Keys.dailyGoalHours) }
     }
@@ -113,6 +135,8 @@ final class AppSettings {
         static let focusRatingsEnabled = "focusRatingsEnabled"
         static let streaksEnabled = "streaksEnabled"
         static let showGoalSummary = "showGoalSummary"
+        static let showTimeWithoutActivity = "showTimeWithoutActivity"
+        static let durationDisplayStyle = "durationDisplayStyle"
         static let dailyGoalHours = "dailyGoalHours"
         static let useWeekdayDailyGoals = "useWeekdayDailyGoals"
         static let weekdayGoalHours = "weekdayGoalHours"
@@ -137,6 +161,10 @@ final class AppSettings {
         focusRatingsEnabled = defaults.object(forKey: Keys.focusRatingsEnabled) as? Bool ?? true
         streaksEnabled = defaults.object(forKey: Keys.streaksEnabled) as? Bool ?? true
         showGoalSummary = defaults.object(forKey: Keys.showGoalSummary) as? Bool ?? true
+        showTimeWithoutActivity = defaults.object(forKey: Keys.showTimeWithoutActivity) as? Bool ?? true
+        durationDisplayStyle = DurationDisplayStyle(
+            rawValue: defaults.string(forKey: Keys.durationDisplayStyle) ?? ""
+        ) ?? .hoursAndMinutes
         let loadedDailyGoalHours = defaults.object(forKey: Keys.dailyGoalHours) as? Double ?? 2.0
         dailyGoalHours = loadedDailyGoalHours
         useWeekdayDailyGoals = defaults.object(forKey: Keys.useWeekdayDailyGoals) as? Bool ?? false
@@ -231,6 +259,8 @@ final class AppSettings {
         focusRatingsEnabled = true
         streaksEnabled = true
         showGoalSummary = true
+        showTimeWithoutActivity = true
+        durationDisplayStyle = .hoursAndMinutes
         dailyGoalHours = 2.0
         useWeekdayDailyGoals = false
         weekdayGoalHours = Array(repeating: 2.0, count: 7)

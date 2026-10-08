@@ -2,7 +2,9 @@ import Foundation
 
 /// Pure functions for attributing study time across calendar days and term boundaries.
 enum StudyTimeAttribution {
-    /// Splits session study time proportionally across calendar days when a session spans midnight.
+    /// Splits session study time across calendar days. When wall-clock time is
+    /// longer than study time (for example after a forgotten overnight session),
+    /// the study duration is treated as contiguous from the recorded start.
     /// Used for heatmap cells and streak calculations.
     static func dailySeconds(
         startTime: Date,
@@ -12,14 +14,17 @@ enum StudyTimeAttribution {
         guard totalStudySeconds > 0, endTime > startTime else { return [:] }
 
         let calendar = Calendar.app
+        let durationEnd = startTime.addingTimeInterval(TimeInterval(totalStudySeconds))
+        let attributedEnd = min(endTime, durationEnd)
         var result: [Date: Int] = [:]
         var segmentStart = startTime
-        let sessionDuration = endTime.timeIntervalSince(startTime)
+        let sessionDuration = attributedEnd.timeIntervalSince(startTime)
+        guard sessionDuration > 0 else { return [:] }
 
-        while segmentStart < endTime {
+        while segmentStart < attributedEnd {
             let dayStart = calendar.startOfDay(for: segmentStart)
             guard let nextDay = calendar.date(byAdding: .day, value: 1, to: dayStart) else { break }
-            let segmentEnd = min(endTime, nextDay)
+            let segmentEnd = min(attributedEnd, nextDay)
             let wallSeconds = segmentEnd.timeIntervalSince(segmentStart)
             let proportion = wallSeconds / sessionDuration
             let attributed = Int((Double(totalStudySeconds) * proportion).rounded())
@@ -44,12 +49,14 @@ enum StudyTimeAttribution {
         termLastDay: Date
     ) -> Int {
         let calendar = Calendar.app
+        let durationEnd = startTime.addingTimeInterval(TimeInterval(totalStudySeconds))
+        let attributedEnd = min(endTime, durationEnd)
         let lastDayEnd = calendar.date(byAdding: .day, value: 1, to: termLastDay) ?? termLastDay
-        if endTime <= lastDayEnd { return totalStudySeconds }
+        if attributedEnd <= lastDayEnd { return totalStudySeconds }
         if startTime >= lastDayEnd { return 0 }
 
-        let clippedEnd = min(endTime, lastDayEnd)
-        let fullDuration = endTime.timeIntervalSince(startTime)
+        let clippedEnd = min(attributedEnd, lastDayEnd)
+        let fullDuration = attributedEnd.timeIntervalSince(startTime)
         guard fullDuration > 0 else { return 0 }
         let clippedDuration = clippedEnd.timeIntervalSince(startTime)
         return Int((Double(totalStudySeconds) * (clippedDuration / fullDuration)).rounded())

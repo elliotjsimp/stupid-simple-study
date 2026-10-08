@@ -135,7 +135,10 @@ struct DashboardView: View {
                     let pct = String(format: "%.1f", round(progress * 10000) / 100)
 
                     HStack {
-                        Text("Today: \(DurationFormatters.compactHours(stats.todayStudySeconds)) / \(DurationFormatters.compactHours(goalSeconds))")
+                        Text(
+                            "Today: \(DurationFormatters.compactHours(stats.todayStudySeconds, style: settings.durationDisplayStyle)) / "
+                            + DurationFormatters.compactHours(goalSeconds, style: settings.durationDisplayStyle)
+                        )
                         Spacer()
                         Text("\(pct)%")
                             .foregroundStyle(.secondary)
@@ -152,8 +155,14 @@ struct DashboardView: View {
             }
 
             HStack(spacing: 24) {
-                statItem("Total", DurationFormatters.compactHours(stats.totalStudySeconds))
-                statItem("Avg/day", DurationFormatters.compactHours(stats.averagePerStudyDaySeconds))
+                statItem(
+                    "Total",
+                    DurationFormatters.compactHours(stats.totalStudySeconds, style: settings.durationDisplayStyle)
+                )
+                statItem(
+                    "Avg/day",
+                    DurationFormatters.compactHours(stats.averagePerStudyDaySeconds, style: settings.durationDisplayStyle)
+                )
                 if settings.streaksEnabled {
                     statItem("Streak", "\(stats.currentStreak)d")
                     statItem("Longest", "\(stats.longestStreak)d")
@@ -218,8 +227,8 @@ struct DashboardView: View {
                             color: settings.resolvedAccentColor
                         )
                     },
-                    footnote: stats.secondsWithoutActivity > 0
-                        ? "\(DurationFormatters.compactHours(stats.secondsWithoutActivity)) without activity"
+                    footnote: settings.showTimeWithoutActivity && stats.secondsWithoutActivity > 0
+                        ? "\(DurationFormatters.compactHours(stats.secondsWithoutActivity, style: settings.durationDisplayStyle)) without activity"
                         : nil,
                     minXScaleSeconds: settings.chartScaleGoalSeconds
                 )
@@ -245,17 +254,25 @@ struct DashboardView: View {
         Card {
             Text("Quality Trend").font(.headline)
             if selectedRange == .day {
-                ChartOneDayPlaceholder()
+                if stats.studyDayCount > 0 {
+                    qualityTrendChart(stats)
+                } else {
+                    ChartOneDayPlaceholder()
+                }
             } else if remainingUnlockDays > 0 {
                 ChartUnlockPlaceholder(remainingDays: remainingUnlockDays, chartName: "quality trend")
             } else {
-                FocusTrendChart(
-                    points: stats.focusTrend,
-                    range: selectedRange,
-                    themeColor: settings.resolvedAccentColor
-                )
-                .frame(maxHeight: .infinity)
+                qualityTrendChart(stats)
             }
         }
+    }
+
+    private func qualityTrendChart(_ stats: TermStats) -> some View {
+        FocusTrendChart(
+            points: stats.focusTrend,
+            range: selectedRange,
+            themeColor: settings.resolvedAccentColor
+        )
+        .frame(maxHeight: .infinity)
     }
 }

@@ -321,7 +321,6 @@ struct ActiveSessionPill: View {
 
 struct FocusedSessionView: View {
     @Environment(SessionEngine.self) private var sessionEngine
-    @Environment(\.appSettings) private var settings
 
     @Binding var showEndSheet: Bool
     @Binding var showShortSessionConfirm: Bool
@@ -348,6 +347,5 @@ struct FocusedSessionView: View {
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(settings.resolvedAccentColor.opacity(0.06))
     }
 }

@@ -272,6 +272,7 @@ struct EditSessionSheet: View {
                 Spacer()
                 Button("Done") {
                     session.studyTimeSeconds = studyMinutes * 60
+                    session.endTime = session.startTime.addingTimeInterval(TimeInterval(session.studyTimeSeconds))
                     session.note = note
                     session.focusRating = settings.focusRatingsEnabled ? focusRating : nil
                     try? modelContext.save()

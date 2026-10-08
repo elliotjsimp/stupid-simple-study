@@ -10,6 +10,8 @@ struct StudyTimeBar: Identifiable {
 }
 
 struct StudyTimeBarChart: View {
+    @Environment(\.appSettings) private var settings
+
     let bars: [StudyTimeBar]
     var footnote: String?
     /// Minimum x-axis maximum (seconds); chart spans at least this much when set.
@@ -106,7 +108,7 @@ struct StudyTimeBarChart: View {
                 AxisGridLine()
                 AxisValueLabel(centered: true) {
                     if let seconds = value.as(Int.self) {
-                        Text(DurationFormatters.compactHours(seconds))
+                        Text(DurationFormatters.compactHours(seconds, style: settings.durationDisplayStyle))
                             .font(.caption2)
                     }
                 }
@@ -150,7 +152,11 @@ struct StudyTimeBarChart: View {
             let plotRect = geometry[plotFrame]
             let barWidth = max(0, xEnd - xStart)
             let bandHeight = yRange.upperBound - yRange.lowerBound
-            Text("\(bar.name) (\(DurationFormatters.compactHours(bar.seconds)))")
+            Text(
+                "\(bar.name) ("
+                + DurationFormatters.compactHours(bar.seconds, style: settings.durationDisplayStyle)
+                + ")"
+            )
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.white)
                 .lineLimit(1)
@@ -202,6 +208,8 @@ enum DashboardLayout {
 }
 
 struct HeatmapView: View {
+    @Environment(\.appSettings) private var settings
+
     let dailyTotals: [DailyStudyTotal]
     let trackingStart: Date
     let termFirstDay: Date
@@ -228,6 +236,7 @@ struct HeatmapView: View {
             termFirstDay: termFirstDay,
             termLastDay: termLastDay,
             fullColorSeconds: fullColorSeconds,
+            durationDisplayStyle: settings.durationDisplayStyle,
             themeColor: themeColor,
             spacing: spacing,
             gridHeight: gridHeight,
@@ -402,6 +411,7 @@ private struct HeatmapLayout {
     let trackingStart: Date
     let today: Date
     let fullColorSeconds: Int
+    let durationDisplayStyle: DurationDisplayStyle
     let themeColor: Color
 
     var contentWidth: CGFloat {
@@ -415,6 +425,7 @@ private struct HeatmapLayout {
         termFirstDay: Date,
         termLastDay: Date,
         fullColorSeconds: Int,
+        durationDisplayStyle: DurationDisplayStyle,
         themeColor: Color,
         spacing: CGFloat,
         gridHeight: CGFloat,
@@ -426,6 +437,7 @@ private struct HeatmapLayout {
         self.termFirstDayStart = termFirstDay.startOfDay
         self.termLastDayStart = termLastDay.startOfDay
         self.fullColorSeconds = fullColorSeconds
+        self.durationDisplayStyle = durationDisplayStyle
         self.themeColor = themeColor
         self.spacing = spacing
         self.gridHeight = gridHeight
@@ -521,7 +533,7 @@ private struct HeatmapLayout {
         if outOfTerm { return "\(date): Outside term" }
         if untracked { return "\(date): Before tracking started" }
         if future { return "\(date): No study yet" }
-        return "\(date): \(DurationFormatters.compactHours(seconds))"
+        return "\(date): \(DurationFormatters.compactHours(seconds, style: durationDisplayStyle))"
     }
 
     private static func startOfWeek(for date: Date) -> Date {
@@ -566,16 +578,31 @@ private struct QualityTrendSample: Identifiable {
 }
 
 struct FocusTrendChart: View {
+    @Environment(\.appSettings) private var settings
+
     let points: [FocusTrendPoint]
     let range: DashboardTimeRange
     let themeColor: Color
 
     @State private var selectedID: PersistentIdentifier?
+    @State private var captionSize: CGSize = .zero
 
     private let hoverAnimation = Animation.easeInOut(duration: 0.18)
 
-    /// One sample per rated day: the mean of that day's ratings, then a trailing mean over the range window.
+    /// 1D uses a running average per rated session. Longer ranges use one
+    /// sample per rated day and a trailing mean over the selected window.
     private var trendSamples: [QualityTrendSample] {
+        if range == .day {
+            var runningTotal = 0.0
+            return points.sorted { $0.date < $1.date }.enumerated().map { index, point in
+                runningTotal += point.rating
+                return QualityTrendSample(
+                    date: point.date,
+                    average: runningTotal / Double(index + 1)
+                )
+            }
+        }
+
         let grouped = Dictionary(grouping: points) { $0.date.startOfDay }
         let days = grouped.keys.sorted()
         let window = max(1, range.qualityTrendWindowDays)
@@ -600,14 +627,19 @@ struct FocusTrendChart: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         } else {
             Chart {
-                ForEach(trendSamples) { sample in
-                    LineMark(
-                        x: .value("Date", sample.date),
-                        y: .value("Rating", sample.average),
-                        series: .value("Series", "Trend")
-                    )
-                    .foregroundStyle(themeColor)
-                    .interpolationMethod(.monotone)
+                if trendSamples.count == 1, let sample = trendSamples.first {
+                    RuleMark(y: .value("Rating", sample.average))
+                        .foregroundStyle(themeColor)
+                } else {
+                    ForEach(trendSamples) { sample in
+                        LineMark(
+                            x: .value("Date", sample.date),
+                            y: .value("Rating", sample.average),
+                            series: .value("Series", "Trend")
+                        )
+                        .foregroundStyle(themeColor)
+                        .interpolationMethod(.monotone)
+                    }
                 }
             }
             .chartYScale(domain: 0...5)
@@ -655,20 +687,46 @@ struct FocusTrendChart: View {
            let x = proxy.position(forX: point.date),
            let y = proxy.position(forY: point.rating) {
             let plotRect = geometry[plotFrame]
+            let horizontalPadding: CGFloat = 6
+            let availableWidth = max(0, geometry.size.width - horizontalPadding * 2)
+            let initialWidth = min(240, availableWidth)
+            let measuredWidth = captionSize.width > 0
+                ? min(captionSize.width, availableWidth)
+                : initialWidth
+            let halfWidth = measuredWidth / 2
+            let rawX = plotRect.minX + x
+            let clampedX = min(
+                max(rawX, horizontalPadding + halfWidth),
+                geometry.size.width - horizontalPadding - halfWidth
+            )
+            let halfHeight = captionSize.height / 2
             Text(sessionCaption(point))
                 .font(.caption)
                 .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .fixedSize()
-                .position(x: plotRect.minX + x, y: max(14, plotRect.minY + y - 22))
+                .frame(maxWidth: max(40, geometry.size.width - horizontalPadding * 2))
+                .onGeometryChange(for: CGSize.self) { proxy in
+                    proxy.size
+                } action: { newSize in
+                    captionSize = newSize
+                }
+                .position(
+                    x: clampedX,
+                    y: max(horizontalPadding + halfHeight, plotRect.minY + y - 22)
+                )
         }
     }
 
     private func sessionCaption(_ point: FocusTrendPoint) -> String {
         let when = point.date.formatted(date: .abbreviated, time: .shortened)
-        let time = DurationFormatters.compactHours(point.studySeconds)
+        let time = DurationFormatters.compactHours(
+            point.studySeconds,
+            style: settings.durationDisplayStyle
+        )
         if point.activityNames.isEmpty {
             return "\(point.courseName) · \(when) (\(time))"
         }
