@@ -57,8 +57,13 @@ final class SessionEngine {
     private var tickTask: Task<Void, Never>?
     private var studySegmentStart: Date?
     private var screenLockObserver: NSObjectProtocol?
+    private var screenUnlockObserver: NSObjectProtocol?
     private var screenSleepObserver: NSObjectProtocol?
+    private var screenWakeObserver: NSObjectProtocol?
+    private var lockPauseTask: Task<Void, Never>?
+    private var lockStartedAt: Date?
     private let snapshotKey = "sessionSnapshot"
+    private let lockPauseDelay: TimeInterval = 15 * 60
 
     var isActive: Bool { state != .idle }
 
@@ -75,14 +80,28 @@ final class SessionEngine {
             object: nil,
             queue: .main
         ) { _ in
-            Task { @MainActor in SessionEngine.shared.pause() }
+            Task { @MainActor in SessionEngine.shared.beginLockGracePeriod() }
+        }
+        screenUnlockObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.apple.screenIsUnlocked"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in SessionEngine.shared.endLockGracePeriod() }
         }
         screenSleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.screensDidSleepNotification,
             object: nil,
             queue: .main
         ) { _ in
-            Task { @MainActor in SessionEngine.shared.pause() }
+            Task { @MainActor in SessionEngine.shared.beginLockGracePeriod() }
+        }
+        screenWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in SessionEngine.shared.endLockGracePeriod() }
         }
     }
 
@@ -103,16 +122,45 @@ final class SessionEngine {
     }
 
     func pause() {
+        pause(at: Date())
+    }
+
+    private func pause(at date: Date) {
         guard state == .studying else { return }
-        let now = Date()
-        let delta = currentStudyingDelta(at: now)
-        finalizeOpenSegment(at: now)
+        let delta = currentStudyingDelta(at: date)
+        finalizeOpenSegment(at: date)
         accumulatedStudySeconds += delta
         studySegmentStart = nil
-        lastStudyEndTime = now
+        lastStudyEndTime = date
         state = .paused
         stopTicking()
         persistSnapshot()
+    }
+
+    private func beginLockGracePeriod() {
+        guard lockStartedAt == nil else { return }
+        let lockedAt = Date()
+        lockStartedAt = lockedAt
+        lockPauseTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(15 * 60))
+            guard !Task.isCancelled else { return }
+            self?.pauseForLongLock(startedAt: lockedAt)
+        }
+    }
+
+    private func endLockGracePeriod() {
+        guard let lockedAt = lockStartedAt else { return }
+        if Date().timeIntervalSince(lockedAt) >= lockPauseDelay {
+            pauseForLongLock(startedAt: lockedAt)
+        }
+        lockPauseTask?.cancel()
+        lockPauseTask = nil
+        lockStartedAt = nil
+    }
+
+    private func pauseForLongLock(startedAt: Date) {
+        let pauseDate = startedAt.addingTimeInterval(lockPauseDelay)
+        pause(at: min(Date(), pauseDate))
     }
 
     func resume() {
@@ -273,6 +321,9 @@ final class SessionEngine {
 
     private func reset() {
         stopTicking()
+        lockPauseTask?.cancel()
+        lockPauseTask = nil
+        lockStartedAt = nil
         state = .idle
         accumulatedStudySeconds = 0
         sessionStartTime = nil

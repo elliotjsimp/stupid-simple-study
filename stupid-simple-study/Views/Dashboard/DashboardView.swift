@@ -140,6 +140,11 @@ struct DashboardView: View {
                             + DurationFormatters.compactHours(goalSeconds, style: settings.durationDisplayStyle)
                         )
                         Spacer()
+                        if goalSeconds > 0, stats.todayStudySeconds >= goalSeconds {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(settings.resolvedAccentColor)
+                                .accessibilityLabel("Daily goal met")
+                        }
                         Text("\(pct)%")
                             .foregroundStyle(.secondary)
                             .font(.subheadline)

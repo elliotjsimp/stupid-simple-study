@@ -333,9 +333,18 @@ struct FocusedSessionView: View {
                 CoursePill(course: course, large: true)
             }
 
-            Text(DurationFormatters.clock(seconds: sessionEngine.displayStudySeconds))
-                .font(.system(size: 72, weight: .light, design: .rounded))
-                .monospacedDigit()
+            VStack(spacing: 8) {
+                Text(DurationFormatters.clock(seconds: sessionEngine.displayStudySeconds))
+                    .font(.system(size: 72, weight: .light, design: .rounded))
+                    .monospacedDigit()
+
+                if sessionEngine.state == .paused,
+                   let pausedAt = sessionEngine.lastStudyEndTime {
+                    Text("Paused at \(pausedAt.formatted(date: .omitted, time: .shortened))")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             ActivitySwitcher(large: true)
 

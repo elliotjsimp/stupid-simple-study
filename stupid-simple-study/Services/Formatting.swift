@@ -46,16 +46,6 @@ struct DurationFormatters {
         return String(format: "%02d:%02d:%02d", h, m, s)
     }
 
-    static func menuBarClock(seconds: Int) -> String {
-        let h = seconds / 3600
-        let m = (seconds % 3600) / 60
-        let s = seconds % 60
-        if h > 0 {
-            return String(format: "%d:%02d:%02d", h, m, s)
-        }
-        return String(format: "%d:%02d", m, s)
-    }
-
     static func compactHours(_ seconds: Int, style: DurationDisplayStyle) -> String {
         switch style {
         case .hoursAndMinutes:

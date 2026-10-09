@@ -241,7 +241,7 @@ struct MenuBarLabel: View {
         return HStack(spacing: 4) {
             Image("MenuBarIcon")
             if settings.showMenuBarTimer && sessionEngine.isActive {
-                Text(DurationFormatters.menuBarClock(seconds: sessionEngine.displayStudySeconds))
+                Text(DurationFormatters.clock(seconds: sessionEngine.displayStudySeconds))
                     .monospacedDigit()
             }
         }
