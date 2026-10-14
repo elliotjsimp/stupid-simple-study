@@ -259,23 +259,7 @@ struct EndSessionSheet: View {
         session.term = term
         session.course = course
         modelContext.insert(session)
-
-        for live in SessionEngine.normalizedSegments(sessionEngine.segments) where live.durationSeconds > 0 {
-            guard let name = live.activityName else { continue }
-            let descriptor = FetchDescriptor<Activity>()
-            let activities = (try? modelContext.fetch(descriptor)) ?? []
-            let activity: Activity
-            if let existing = activities.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-                activity = existing
-            } else {
-                activity = Activity(name: name)
-                modelContext.insert(activity)
-            }
-            let segment = ActivitySegment(startTime: live.startTime, durationSeconds: live.durationSeconds)
-            segment.activity = activity
-            segment.session = session
-            modelContext.insert(segment)
-        }
+        sessionEngine.insertActivitySegments(into: session, context: modelContext)
 
         try? modelContext.save()
         sessionEngine.discard()

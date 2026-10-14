@@ -5,6 +5,7 @@ struct SessionsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.appSettings) private var settings
     @Environment(TermContext.self) private var termContext
+    @Environment(StudyDayClock.self) private var dayClock
 
     @Query(sort: \StudySession.startTime, order: .reverse) private var allSessions: [StudySession]
 
@@ -22,6 +23,7 @@ struct SessionsView: View {
     }
 
     var body: some View {
+        let _ = dayClock.startOfToday
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 CourseActivityFilterBar(
@@ -160,6 +162,11 @@ struct AddPastSessionSheet: View {
             Toggle("Use end time", isOn: $useEndTime)
             if useEndTime {
                 DatePicker("End", selection: $endTime, displayedComponents: .hourAndMinute)
+                if endsNextDay {
+                    Text("Ends the next day")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 Stepper("Duration: \(durationMinutes) min", value: $durationMinutes, in: 1...720)
                 Stepper("Break: \(breakMinutes) min", value: $breakMinutes, in: 0...180)
@@ -186,6 +193,16 @@ struct AddPastSessionSheet: View {
         .onAppear { selectedCourse = courses.first }
     }
 
+    private var endsNextDay: Bool {
+        guard useEndTime else { return false }
+        return clockMinutes(endTime) < clockMinutes(startTime)
+    }
+
+    private func clockMinutes(_ date: Date) -> Int {
+        let parts = Calendar.app.dateComponents([.hour, .minute], from: date)
+        return (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+    }
+
     private func save() {
         guard let term = termContext.displayedTerm, let course = selectedCourse else { return }
         let calendar = Calendar.app
@@ -198,16 +215,34 @@ struct AddPastSessionSheet: View {
         startComponents.day = calendar.component(.day, from: date)
         guard let start = calendar.date(from: startComponents) else { return }
 
-        let studySeconds: Int
-        let end: Date
+        var studySeconds: Int
+        var end: Date
         if useEndTime {
             var endComponents = calendar.dateComponents([.hour, .minute], from: endTime)
             endComponents.year = startComponents.year
             endComponents.month = startComponents.month
             endComponents.day = startComponents.day
-            guard let endDate = calendar.date(from: endComponents), endDate > start else { return }
-            end = endDate
+            guard let endOnStartDay = calendar.date(from: endComponents) else { return }
+            if endOnStartDay > start {
+                end = endOnStartDay
+            } else if endsNextDay, let nextDay = calendar.date(byAdding: .day, value: 1, to: endOnStartDay) {
+                end = nextDay
+            } else {
+                return
+            }
             studySeconds = Int(end.timeIntervalSince(start))
+            let clipped = StudyTimeAttribution.clipToTermLastDay(
+                startTime: start,
+                endTime: end,
+                totalStudySeconds: studySeconds,
+                termLastDay: term.lastDay
+            )
+            if clipped <= 0 { return }
+            if clipped < studySeconds {
+                let lastDayEnd = calendar.date(byAdding: .day, value: 1, to: term.lastDay.startOfDay) ?? end
+                end = min(end, lastDayEnd)
+                studySeconds = clipped
+            }
         } else {
             studySeconds = max(0, durationMinutes * 60 - breakMinutes * 60)
             end = start.addingTimeInterval(TimeInterval(studySeconds))

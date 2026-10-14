@@ -6,6 +6,7 @@ struct RootView: View {
     @Environment(\.appSettings) private var settings
     @Environment(TermContext.self) private var termContext
     @Environment(SessionEngine.self) private var sessionEngine
+    @Environment(StudyDayClock.self) private var dayClock
     @Environment(CourseEditorPresenter.self) private var courseEditor
 
     @Query(sort: \Term.firstDay) private var terms: [Term]
@@ -39,6 +40,13 @@ struct RootView: View {
         .appAccentColor(settings)
         .onChange(of: terms) { _, newTerms in
             termContext.refresh(terms: newTerms)
+        }
+        .onChange(of: dayClock.startOfToday) { _, _ in
+            let wasViewingActive = termContext.activeTerm?.persistentModelID == termContext.displayedTerm?.persistentModelID
+            termContext.refresh(terms: terms)
+            if wasViewingActive, let active = termContext.activeTerm {
+                termContext.selectDisplayedTerm(active)
+            }
         }
         .onAppear {
             termContext.refresh(terms: terms)
@@ -80,13 +88,16 @@ struct RootView: View {
         ) {
             Button("Resume") {
                 if let snapshot = pendingSnapshot {
-                    sessionEngine.restore(from: snapshot, context: modelContext)
+                    sessionEngine.restore(from: snapshot, context: modelContext, continuing: true)
                 }
                 pendingSnapshot = nil
             }
             Button("Save as-is") {
-                _ = sessionEngine.saveAsIs(context: modelContext)
-                try? modelContext.save()
+                if let snapshot = pendingSnapshot {
+                    sessionEngine.restore(from: snapshot, context: modelContext, continuing: false)
+                    _ = sessionEngine.saveAsIs(context: modelContext)
+                    try? modelContext.save()
+                }
                 pendingSnapshot = nil
             }
             Button("Discard", role: .destructive) {
@@ -124,7 +135,7 @@ struct RootView: View {
 
                     TermBannerView(
                         isNonActive: termContext.isBrowsingNonActiveTerm,
-                        isConcluded: termContext.isDisplayedTermConcluded && !termContext.isBrowsingNonActiveTerm
+                        isConcluded: displayedTermHasConcluded && !termContext.isBrowsingNonActiveTerm
                     )
                 }
                 detailContent
@@ -161,6 +172,11 @@ struct RootView: View {
         }
     }
 
+    private var displayedTermHasConcluded: Bool {
+        guard let term = termContext.displayedTerm else { return false }
+        return term.lastDay < dayClock.startOfToday
+    }
+
     private func presentEndSheetIfRequested() {
         guard sessionEngine.shouldPresentEndSheet else { return }
         showEndSheet = true
@@ -173,6 +189,7 @@ struct RootView: View {
         .modelContainer(AppModelContainer.make(inMemory: true))
         .environment(TermContext())
         .environment(SessionEngine.shared)
+        .environment(StudyDayClock.shared)
         .environment(CourseEditorPresenter())
         .environment(\.appSettings, AppSettings.shared)
 }

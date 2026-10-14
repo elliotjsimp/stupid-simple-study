@@ -4,6 +4,8 @@ import SwiftData
 struct DashboardView: View {
     @Environment(\.appSettings) private var settings
     @Environment(TermContext.self) private var termContext
+    @Environment(StudyDayClock.self) private var dayClock
+    @Environment(SessionEngine.self) private var sessionEngine
 
     @Query private var allSessions: [StudySession]
     @State private var selectedRange: DashboardTimeRange = .all
@@ -17,8 +19,8 @@ struct DashboardView: View {
     }
 
     private var asOfDay: Date {
-        guard let term = termContext.displayedTerm else { return Date().startOfDay }
-        let today = Date().startOfDay
+        guard let term = termContext.displayedTerm else { return dayClock.startOfToday }
+        let today = dayClock.startOfToday
         if today < term.firstDay { return term.firstDay }
         if today > term.lastDay { return term.lastDay }
         return today
@@ -30,8 +32,12 @@ struct DashboardView: View {
     }
 
     private var stats: TermStats? {
+        let _ = sessionEngine.tickCount
         guard let term = termContext.displayedTerm else { return nil }
         let range = statsRange
+        let provisional = sessionEngine.term?.persistentModelID == term.persistentModelID
+            ? sessionEngine.provisionalStudy()
+            : nil
         return StatsCalculator.compute(
             term: term,
             sessions: termSessions,
@@ -39,6 +45,8 @@ struct DashboardView: View {
             focusRatingsEnabled: settings.focusRatingsEnabled,
             rangeStart: range?.start,
             rangeEnd: range?.end,
+            asOf: dayClock.startOfToday,
+            provisional: provisional,
             goalHoursForDay: { settings.goalHours(for: $0) }
         )
     }
@@ -124,15 +132,16 @@ struct DashboardView: View {
     }
 
     private func statsStrip(_ stats: TermStats, term: Term) -> some View {
-        let goalSeconds = settings.goalSeconds(for: Date())
-        let showsToday = term.contains(date: Date())
+        let goalSeconds = settings.goalSeconds(for: dayClock.startOfToday)
+        let showsToday = term.contains(date: dayClock.startOfToday)
         return Card {
             Text("Overview").font(.headline)
 
             VStack(alignment: .leading, spacing: 6) {
                 if showsToday {
-                    let progress = goalSeconds > 0 ? min(Double(stats.todayStudySeconds) / Double(goalSeconds), 1.0) : 0
+                    let progress = goalSeconds > 0 ? Double(stats.todayStudySeconds) / Double(goalSeconds) : 0
                     let pct = String(format: "%.1f", round(progress * 10000) / 100)
+                    let pastGoal = goalSeconds > 0 && stats.todayStudySeconds >= goalSeconds
 
                     HStack {
                         Text(
@@ -140,17 +149,19 @@ struct DashboardView: View {
                             + DurationFormatters.compactHours(goalSeconds, style: settings.durationDisplayStyle)
                         )
                         Spacer()
-                        if goalSeconds > 0, stats.todayStudySeconds >= goalSeconds {
+                        if pastGoal {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(settings.resolvedAccentColor)
                                 .accessibilityLabel("Daily goal met")
                         }
                         Text("\(pct)%")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(pastGoal ? settings.resolvedAccentColor : .secondary)
                             .font(.subheadline)
                     }
                     .font(.title3.bold())
-                    ProgressView(value: min(1, Double(stats.todayStudySeconds) / Double(max(goalSeconds, 1))))
+                    if goalSeconds > 0 {
+                        ProgressView(value: min(progress, 1))
+                    }
                 }
                 if settings.showGoalSummary {
                     Text("\(stats.dailyGoalProgressDays) of \(stats.dailyGoalTargetDays) study days met goal \(selectedRange.goalCaptionSuffix)")

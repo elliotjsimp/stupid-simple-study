@@ -1,6 +1,23 @@
 import Foundation
 import SwiftData
 
+struct ProvisionalSegment {
+    var startTime: Date
+    var durationSeconds: Int
+    var activityName: String?
+}
+
+/// An in-progress session, attributed separately from saved sessions so a live
+/// session that crosses midnight can land on both days before it is saved.
+struct ProvisionalStudy {
+    var startTime: Date
+    var endTime: Date
+    var studyTimeSeconds: Int
+    var courseName: String
+    var courseColorHex: String
+    var segments: [ProvisionalSegment]
+}
+
 struct DailyStudyTotal: Identifiable {
     let date: Date
     let seconds: Int
@@ -62,6 +79,8 @@ enum StatsCalculator {
         focusRatingsEnabled: Bool = true,
         rangeStart: Date? = nil,
         rangeEnd: Date? = nil,
+        asOf: Date = Date(),
+        provisional: ProvisionalStudy? = nil,
         goalHoursForDay: (Date) -> Double = { _ in 2.0 }
     ) -> TermStats {
         let filtered = sessions.filter { session in
@@ -91,11 +110,20 @@ enum StatsCalculator {
             return true
         }
 
-        for session in filtered {
-            let daily = StudyTimeAttribution.dailySeconds(
-                startTime: session.startTime,
-                endTime: session.endTime,
-                totalStudySeconds: session.studyTimeSeconds
+        func accumulate(
+            startTime: Date,
+            endTime: Date,
+            studyTimeSeconds: Int,
+            courseName: String?,
+            courseColorHex: String?,
+            segments: [(start: Date, duration: Int, activityName: String?)],
+            focus: (id: PersistentIdentifier, rating: Int, activityNames: String, studySeconds: Int)?
+        ) {
+            let daily = Self.dailyBreakdown(
+                startTime: startTime,
+                endTime: endTime,
+                totalStudySeconds: studyTimeSeconds,
+                segments: segments.map { (start: $0.start, duration: $0.duration) }
             )
             var sessionInRangeSeconds = 0
             for (day, seconds) in daily {
@@ -108,36 +136,69 @@ enum StatsCalculator {
                 }
             }
 
-            if sessionInRangeSeconds > 0, let course = session.course {
-                let key = course.name
-                let existing = courseMap[key]?.seconds ?? 0
-                courseMap[key] = (existing + sessionInRangeSeconds, course.colorHex)
+            if sessionInRangeSeconds > 0, let courseName, let courseColorHex {
+                let existing = courseMap[courseName]?.seconds ?? 0
+                courseMap[courseName] = (existing + sessionInRangeSeconds, courseColorHex)
             }
 
-            let fraction = session.studyTimeSeconds > 0
-                ? Double(sessionInRangeSeconds) / Double(session.studyTimeSeconds)
+            let fraction = studyTimeSeconds > 0
+                ? Double(sessionInRangeSeconds) / Double(studyTimeSeconds)
                 : 0
-            let segmentTotal = session.sortedSegments.reduce(0) { $0 + $1.durationSeconds }
-            for segment in session.sortedSegments {
-                if let name = segment.activity?.name {
-                    activityMap[name, default: 0] += Int((Double(segment.durationSeconds) * fraction).rounded())
-                }
+            var namedTotal = 0
+            for segment in segments {
+                guard let name = segment.activityName else { continue }
+                namedTotal += segment.duration
+                activityMap[name, default: 0] += Int((Double(segment.duration) * fraction).rounded())
             }
-            let unattributed = max(0, session.studyTimeSeconds - segmentTotal)
+            let unattributed = max(0, studyTimeSeconds - namedTotal)
             secondsWithoutActivity += Int((Double(unattributed) * fraction).rounded())
 
-            if focusRatingsEnabled, let rating = session.focusRating, sessionInRangeSeconds > 0 {
+            if let focus, focusRatingsEnabled, sessionInRangeSeconds > 0 {
                 focusPoints.append(
                     FocusTrendPoint(
-                        id: session.persistentModelID,
-                        date: session.startTime,
-                        rating: Double(rating),
-                        courseName: session.course?.name ?? "Unknown",
-                        activityNames: session.activityNames,
-                        studySeconds: session.studyTimeSeconds
+                        id: focus.id,
+                        date: startTime,
+                        rating: Double(focus.rating),
+                        courseName: courseName ?? "Unknown",
+                        activityNames: focus.activityNames,
+                        studySeconds: focus.studySeconds
                     )
                 )
             }
+        }
+
+        for session in filtered {
+            let focus: (id: PersistentIdentifier, rating: Int, activityNames: String, studySeconds: Int)?
+            if let rating = session.focusRating {
+                focus = (session.persistentModelID, rating, session.activityNames, session.studyTimeSeconds)
+            } else {
+                focus = nil
+            }
+            accumulate(
+                startTime: session.startTime,
+                endTime: session.endTime,
+                studyTimeSeconds: session.studyTimeSeconds,
+                courseName: session.course?.name,
+                courseColorHex: session.course?.colorHex,
+                segments: session.sortedSegments.map {
+                    (start: $0.startTime, duration: $0.durationSeconds, activityName: $0.activity?.name)
+                },
+                focus: focus
+            )
+        }
+
+        if let provisional, provisional.studyTimeSeconds > 0 {
+            accumulate(
+                startTime: provisional.startTime,
+                endTime: provisional.endTime,
+                studyTimeSeconds: provisional.studyTimeSeconds,
+                courseName: provisional.courseName,
+                courseColorHex: provisional.courseColorHex,
+                segments: provisional.segments.map {
+                    (start: $0.startTime, duration: $0.durationSeconds, activityName: $0.activityName)
+                },
+                focus: nil
+            )
         }
 
         let statsStart = rangeStartDay ?? term.firstDay
@@ -173,7 +234,7 @@ enum StatsCalculator {
         let termStudyDays = termDailyMap.filter { $0.value >= 60 && !StudyTimeAttribution.isUntrackedDay($0.key, trackingStart: term.trackingStartDate) }
         let termStudyDayCount = termStudyDays.count
 
-        let asOfDay = min(Date().startOfDay, term.lastDay)
+        let asOfDay = min(asOf.startOfDay, term.lastDay.startOfDay)
 
         let (current, longest) = streaksEnabled
             ? computeStreaks(dailyMap: termDailyMap, trackingStart: term.trackingStartDate, termLastDay: term.lastDay, asOfDay: asOfDay)
@@ -246,5 +307,34 @@ enum StatsCalculator {
         }
 
         return (streak, longest)
+    }
+
+    /// Prefer real study intervals when they account for the session. That keeps
+    /// a late-night pause from sliding study time onto the wrong calendar day.
+    /// Otherwise fall back to treating study as contiguous from the start.
+    private static func dailyBreakdown(
+        startTime: Date,
+        endTime: Date,
+        totalStudySeconds: Int,
+        segments: [(start: Date, duration: Int)]
+    ) -> [Date: Int] {
+        let covered = segments.reduce(0) { $0 + max(0, $1.duration) }
+        guard covered > 0, abs(covered - totalStudySeconds) <= 2 else {
+            return StudyTimeAttribution.dailySeconds(
+                startTime: startTime,
+                endTime: endTime,
+                totalStudySeconds: totalStudySeconds
+            )
+        }
+        let intervals = segments.compactMap { segment -> (start: Date, end: Date)? in
+            guard segment.duration > 0 else { return nil }
+            return (segment.start, segment.start.addingTimeInterval(TimeInterval(segment.duration)))
+        }
+        var daily = StudyTimeAttribution.dailySeconds(intervals: intervals)
+        let sum = daily.values.reduce(0, +)
+        if sum != totalStudySeconds, let lastDay = daily.keys.sorted().last {
+            daily[lastDay, default: 0] += totalStudySeconds - sum
+        }
+        return daily
     }
 }

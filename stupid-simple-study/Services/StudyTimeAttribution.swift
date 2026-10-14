@@ -2,10 +2,40 @@ import Foundation
 
 /// Pure functions for attributing study time across calendar days and term boundaries.
 enum StudyTimeAttribution {
+    /// Splits known study intervals across the calendar days they occupy.
+    /// Time before midnight stays on the start day; time after midnight counts
+    /// toward the new day. Gaps between intervals (pauses) are not study time.
+    static func dailySeconds(intervals: [(start: Date, end: Date)]) -> [Date: Int] {
+        let calendar = Calendar.app
+        var result: [Date: Int] = [:]
+        var expected = 0
+
+        for (start, end) in intervals where end > start {
+            expected += max(0, Int(end.timeIntervalSince(start).rounded()))
+            var cursor = start
+            while cursor < end {
+                let dayStart = calendar.startOfDay(for: cursor)
+                guard let nextDay = calendar.date(byAdding: .day, value: 1, to: dayStart) else { break }
+                let segmentEnd = min(end, nextDay)
+                let seconds = max(0, Int(segmentEnd.timeIntervalSince(cursor).rounded()))
+                if seconds > 0 {
+                    result[dayStart, default: 0] += seconds
+                }
+                cursor = segmentEnd
+            }
+        }
+
+        let sum = result.values.reduce(0, +)
+        if sum != expected, let lastDay = result.keys.sorted().last {
+            result[lastDay, default: 0] += expected - sum
+        }
+        return result
+    }
+
     /// Splits session study time across calendar days. When wall-clock time is
     /// longer than study time (for example after a forgotten overnight session),
     /// the study duration is treated as contiguous from the recorded start.
-    /// Used for heatmap cells and streak calculations.
+    /// Used when a session has no per-interval record.
     static func dailySeconds(
         startTime: Date,
         endTime: Date,

@@ -35,6 +35,80 @@ struct SessionSnapshot: Codable {
     var segments: [LiveActivitySegment]
     var focusedMode: Bool
     var lastStudyEndTime: Date?
+    /// Start of the in-progress study stint. Nil while paused.
+    var openSegmentStart: Date?
+    /// When this snapshot was written. Used so time after the app quits is not counted as study.
+    var savedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case termID, courseID, courseName, courseColorHex, activityName, state
+        case sessionStartTime, accumulatedStudySeconds, segments, focusedMode, lastStudyEndTime
+        case openSegmentStart, savedAt
+    }
+
+    init(
+        termID: String,
+        courseID: String,
+        courseName: String,
+        courseColorHex: String,
+        activityName: String?,
+        state: SessionEngineState,
+        sessionStartTime: Date,
+        accumulatedStudySeconds: Int,
+        segments: [LiveActivitySegment],
+        focusedMode: Bool,
+        lastStudyEndTime: Date?,
+        openSegmentStart: Date? = nil,
+        savedAt: Date? = nil
+    ) {
+        self.termID = termID
+        self.courseID = courseID
+        self.courseName = courseName
+        self.courseColorHex = courseColorHex
+        self.activityName = activityName
+        self.state = state
+        self.sessionStartTime = sessionStartTime
+        self.accumulatedStudySeconds = accumulatedStudySeconds
+        self.segments = segments
+        self.focusedMode = focusedMode
+        self.lastStudyEndTime = lastStudyEndTime
+        self.openSegmentStart = openSegmentStart
+        self.savedAt = savedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        termID = try container.decode(String.self, forKey: .termID)
+        courseID = try container.decode(String.self, forKey: .courseID)
+        courseName = try container.decode(String.self, forKey: .courseName)
+        courseColorHex = try container.decode(String.self, forKey: .courseColorHex)
+        activityName = try container.decodeIfPresent(String.self, forKey: .activityName)
+        state = try container.decode(SessionEngineState.self, forKey: .state)
+        sessionStartTime = try container.decode(Date.self, forKey: .sessionStartTime)
+        accumulatedStudySeconds = try container.decode(Int.self, forKey: .accumulatedStudySeconds)
+        segments = try container.decode([LiveActivitySegment].self, forKey: .segments)
+        focusedMode = try container.decode(Bool.self, forKey: .focusedMode)
+        lastStudyEndTime = try container.decodeIfPresent(Date.self, forKey: .lastStudyEndTime)
+        openSegmentStart = try container.decodeIfPresent(Date.self, forKey: .openSegmentStart)
+        savedAt = try container.decodeIfPresent(Date.self, forKey: .savedAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(termID, forKey: .termID)
+        try container.encode(courseID, forKey: .courseID)
+        try container.encode(courseName, forKey: .courseName)
+        try container.encode(courseColorHex, forKey: .courseColorHex)
+        try container.encodeIfPresent(activityName, forKey: .activityName)
+        try container.encode(state, forKey: .state)
+        try container.encode(sessionStartTime, forKey: .sessionStartTime)
+        try container.encode(accumulatedStudySeconds, forKey: .accumulatedStudySeconds)
+        try container.encode(segments, forKey: .segments)
+        try container.encode(focusedMode, forKey: .focusedMode)
+        try container.encodeIfPresent(lastStudyEndTime, forKey: .lastStudyEndTime)
+        try container.encodeIfPresent(openSegmentStart, forKey: .openSegmentStart)
+        try container.encodeIfPresent(savedAt, forKey: .savedAt)
+    }
 }
 
 @Observable
@@ -110,13 +184,12 @@ final class SessionEngine {
         self.term = term
         self.course = course
         self.currentActivityName = activityName
-        self.sessionStartTime = Date()
+        let now = Date()
+        self.sessionStartTime = now
         self.state = .studying
-        self.studySegmentStart = Date()
+        self.studySegmentStart = now
         self.lastStudyEndTime = nil
-        if let activityName {
-            segments.append(LiveActivitySegment(activityName: activityName, startTime: Date()))
-        }
+        segments.append(LiveActivitySegment(activityName: activityName, startTime: now))
         startTicking()
         persistSnapshot()
     }
@@ -165,11 +238,12 @@ final class SessionEngine {
 
     func resume() {
         guard state == .paused else { return }
+        let now = Date()
         state = .studying
-        studySegmentStart = Date()
-        if let currentActivityName, segments.last?.activityName != currentActivityName {
-            segments.append(LiveActivitySegment(activityName: currentActivityName, startTime: Date()))
-        }
+        studySegmentStart = now
+        // A new stint, even for the same activity, so a pause that crosses midnight
+        // is not treated as continuous study.
+        segments.append(LiveActivitySegment(activityName: currentActivityName, startTime: now))
         startTicking()
         persistSnapshot()
     }
@@ -193,7 +267,7 @@ final class SessionEngine {
         accumulatedStudySeconds += delta
         lastStudyEndTime = now
         currentActivityName = name
-        if let name, segments.last?.activityName != name {
+        if segments.isEmpty || segments.last?.activityName != name {
             segments.append(LiveActivitySegment(activityName: name, startTime: now))
         }
         studySegmentStart = now
@@ -257,7 +331,10 @@ final class SessionEngine {
         return snapshot.state == .idle ? nil : snapshot
     }
 
-    func restore(from snapshot: SessionSnapshot, context: ModelContext) {
+    /// `continuing` keeps the session running from now. Time while the app was
+    /// closed is not counted. Pass false to freeze the session at the last
+    /// snapshot, which is what "save as-is" uses after an overnight quit.
+    func restore(from snapshot: SessionSnapshot, context: ModelContext, continuing: Bool) {
         let termFetch = FetchDescriptor<Term>()
         let courseFetch = FetchDescriptor<Course>()
         let terms = (try? context.fetch(termFetch)) ?? []
@@ -279,9 +356,20 @@ final class SessionEngine {
         self.segments = snapshot.segments
         self.focusedMode = snapshot.focusedMode
         self.lastStudyEndTime = snapshot.lastStudyEndTime
+        creditOpenSegment(from: snapshot)
 
-        if state == .studying {
+        guard snapshot.state == .studying else { return }
+        if continuing {
+            let now = Date()
+            studySegmentStart = now
+            segments.append(LiveActivitySegment(activityName: currentActivityName, startTime: now))
             startTicking()
+        } else {
+            state = .paused
+            studySegmentStart = nil
+            if let savedAt = snapshot.savedAt {
+                lastStudyEndTime = min(savedAt, Date())
+            }
         }
     }
 
@@ -304,15 +392,7 @@ final class SessionEngine {
         session.term = term
         session.course = course
         context.insert(session)
-
-        for live in Self.normalizedSegments(segments) {
-            guard let name = live.activityName, live.durationSeconds > 0 else { continue }
-            let activity = fetchOrCreateActivity(named: name, context: context)
-            let segment = ActivitySegment(startTime: live.startTime, durationSeconds: live.durationSeconds)
-            segment.activity = activity
-            segment.session = session
-            context.insert(segment)
-        }
+        insertActivitySegments(into: session, context: context)
 
         reset()
         clearSnapshot()
@@ -392,7 +472,9 @@ final class SessionEngine {
             accumulatedStudySeconds: accumulatedStudySeconds,
             segments: segments,
             focusedMode: focusedMode,
-            lastStudyEndTime: lastStudyEndTime
+            lastStudyEndTime: lastStudyEndTime,
+            openSegmentStart: state == .studying ? studySegmentStart : nil,
+            savedAt: Date()
         )
         if let data = try? JSONEncoder().encode(snapshot) {
             UserDefaults.standard.set(data, forKey: snapshotKey)
@@ -414,16 +496,84 @@ final class SessionEngine {
         return activity
     }
 
+    func provisionalStudy(at date: Date = Date()) -> ProvisionalStudy? {
+        guard isActive, let sessionStartTime, let course else { return nil }
+        let seconds = displayStudySeconds
+        guard seconds > 0 else { return nil }
+        let end = effectiveStudyEndTime ?? date
+        var recorded: [ProvisionalSegment] = []
+        for (index, segment) in segments.enumerated() {
+            var duration = segment.durationSeconds
+            if state == .studying, index == segments.count - 1 {
+                duration += currentStudyingDelta(at: date)
+            }
+            guard duration > 0 else { continue }
+            recorded.append(
+                ProvisionalSegment(
+                    startTime: segment.startTime,
+                    durationSeconds: duration,
+                    activityName: segment.activityName
+                )
+            )
+        }
+        return ProvisionalStudy(
+            startTime: sessionStartTime,
+            endTime: end,
+            studyTimeSeconds: seconds,
+            courseName: course.name,
+            courseColorHex: course.colorHex,
+            segments: recorded
+        )
+    }
+
+    func insertActivitySegments(into session: StudySession, context: ModelContext) {
+        for live in Self.normalizedSegments(segments) where live.durationSeconds > 0 {
+            let segment = ActivitySegment(startTime: live.startTime, durationSeconds: live.durationSeconds)
+            if let name = live.activityName {
+                segment.activity = fetchOrCreateActivity(named: name, context: context)
+            }
+            segment.session = session
+            context.insert(segment)
+        }
+    }
+
+    /// Credits the stint that was open when the snapshot was saved, and not the
+    /// time after the app quit.
+    private func creditOpenSegment(from snapshot: SessionSnapshot) {
+        guard snapshot.state == .studying, let openStart = snapshot.openSegmentStart else { return }
+        let creditEnd = min(snapshot.savedAt ?? openStart, Date())
+        let delta = max(0, Int(creditEnd.timeIntervalSince(openStart)))
+        guard delta > 0 else { return }
+        accumulatedStudySeconds += delta
+        if var last = segments.last,
+           last.activityName == currentActivityName,
+           abs(last.startTime.timeIntervalSince(openStart)) < 1 {
+            last.durationSeconds += delta
+            segments[segments.count - 1] = last
+        } else {
+            segments.append(
+                LiveActivitySegment(
+                    activityName: currentActivityName,
+                    startTime: openStart,
+                    durationSeconds: delta
+                )
+            )
+        }
+    }
+
     static func normalizedSegments(_ segments: [LiveActivitySegment]) -> [LiveActivitySegment] {
         var merged: [LiveActivitySegment] = []
         for segment in segments {
-            guard segment.durationSeconds > 0, let name = segment.activityName else { continue }
-            if var last = merged.last, last.activityName == name {
-                last.durationSeconds += segment.durationSeconds
-                merged[merged.count - 1] = last
-            } else {
-                merged.append(segment)
+            guard segment.durationSeconds > 0 else { continue }
+            if var last = merged.last, last.activityName == segment.activityName {
+                let lastEnd = last.startTime.addingTimeInterval(TimeInterval(last.durationSeconds))
+                if abs(segment.startTime.timeIntervalSince(lastEnd)) < 2 {
+                    last.durationSeconds += segment.durationSeconds
+                    merged[merged.count - 1] = last
+                    continue
+                }
             }
+            merged.append(segment)
         }
         return merged
     }

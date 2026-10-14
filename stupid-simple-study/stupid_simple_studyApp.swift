@@ -6,6 +6,7 @@ struct stupid_simple_studyApp: App {
     @State private var settings = AppSettings.shared
     @State private var termContext = TermContext()
     @State private var sessionEngine = SessionEngine.shared
+    @State private var dayClock = StudyDayClock.shared
     @State private var courseEditor = CourseEditorPresenter()
 
     let sharedModelContainer: ModelContainer
@@ -21,6 +22,7 @@ struct stupid_simple_studyApp: App {
                 .environment(\.appSettings, settings)
                 .environment(termContext)
                 .environment(sessionEngine)
+                .environment(dayClock)
                 .environment(courseEditor)
                 .preferredColorScheme(settings.preferredColorScheme)
                 .appAccentColor(settings)

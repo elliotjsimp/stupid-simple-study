@@ -35,6 +35,13 @@ final class StudySession {
     }
 
     var activityNames: String {
-        sortedSegments.compactMap { $0.activity?.name }.joined(separator: ", ")
+        var names: [String] = []
+        for segment in sortedSegments {
+            guard let name = segment.activity?.name else { continue }
+            if names.last?.caseInsensitiveCompare(name) != .orderedSame {
+                names.append(name)
+            }
+        }
+        return names.joined(separator: ", ")
     }
 }
